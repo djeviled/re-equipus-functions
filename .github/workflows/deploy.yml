@@ -1,4 +1,3 @@
-@"
 name: Deploy to Supabase
 
 on:
@@ -28,4 +27,3 @@ jobs:
     
     - name: Deployment Success
       run: echo "🚀 Functions deployed successfully!"
-"@ | Out-File -FilePath ".github\workflows\deploy.yml" -Encoding utf8
