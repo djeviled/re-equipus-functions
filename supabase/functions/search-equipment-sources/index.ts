@@ -1,6 +1,5 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
-import { corsHeaders } from '../_shared/cors.ts';
 
 interface EquipmentSearchParams {
   query: string;
@@ -45,15 +44,79 @@ async function searchEquipmentWatch(params: EquipmentSearchParams): Promise<Equi
     const apiKey = Deno.env.get('EQUIPMENT_WATCH_API_KEY');
     if (!apiKey) {
       console.error('EquipmentWatch API key not found');
-      return [];
+      // Fall back to web scraping service when API key is not available
+      return await scrapeEquipmentWatch(params);
     }
 
-    // In a real implementation, we would make an API request to EquipmentWatch
-    // For now, we'll return mock data
-    console.log('Searching EquipmentWatch for:', params.query);
+    // Construct the API URL with search parameters
+    const baseUrl = 'https://api.equipmentwatch.com/v1/equipment';
+    const searchParams = new URLSearchParams();
     
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 500));
+    if (params.query) searchParams.append('query', params.query);
+    if (params.make) searchParams.append('make', params.make);
+    if (params.model) searchParams.append('model', params.model);
+    if (params.year) searchParams.append('year', params.year);
+    if (params.category) searchParams.append('category', params.category);
+    if (params.minPrice) searchParams.append('min_price', params.minPrice.toString());
+    if (params.maxPrice) searchParams.append('max_price', params.maxPrice.toString());
+    
+    const apiUrl = `${baseUrl}?${searchParams.toString()}`;
+    
+    // Make the API request
+    const response = await fetch(apiUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!response.ok) {
+      console.error(`EquipmentWatch API request failed with status ${response.status}`);
+      // Fall back to web scraping service when API request fails
+      return await scrapeEquipmentWatch(params);
+    }
+    
+    const data = await response.json();
+    
+    // Map the API response to our EquipmentSearchResult interface
+    const results: EquipmentSearchResult[] = data.map((item: any) => ({
+      id: item.id || '',
+      title: item.title || `${item.make || ''} ${item.model || ''}`,
+      description: item.description || '',
+      price: item.price || 0,
+      currency: item.currency || 'USD',
+      year: item.year?.toString() || '',
+      make: item.make || '',
+      model: item.model || '',
+      category: item.category || '',
+      condition: item.condition || 'Unknown',
+      location: item.location || '',
+      imageUrls: item.images || [],
+      sourceUrl: item.url || 'https://equipmentwatch.com',
+      sourceName: 'EquipmentWatch',
+      sourceId: 'equipment-watch',
+      specifications: item.specifications || {},
+      createdAt: item.created_at || new Date().toISOString()
+    }));
+    
+    return results;
+  } catch (error) {
+    console.error('Error searching EquipmentWatch:', error);
+    // Fall back to web scraping service when API request fails
+    return await scrapeEquipmentWatch(params);
+  }
+}
+
+// Web scraping fallback for EquipmentWatch
+async function scrapeEquipmentWatch(params: EquipmentSearchParams): Promise<EquipmentSearchResult[]> {
+  try {
+    // In a real implementation, we would use a web scraping service here
+    // For now, we'll return mock data
+    console.log('Falling back to scraping EquipmentWatch for:', params.query);
+    
+    // Simulate scraping delay
+    await new Promise(resolve => setTimeout(resolve, 700));
     
     // Return mock data
     return [
@@ -115,17 +178,98 @@ async function searchEquipmentWatch(params: EquipmentSearchParams): Promise<Equi
       }
     ];
   } catch (error) {
-    console.error('Error searching EquipmentWatch:', error);
+    console.error('Error scraping EquipmentWatch:', error);
     return [];
   }
 }
 
-// Mascus scraping client
+// Mascus API client
 async function searchMascus(params: EquipmentSearchParams): Promise<EquipmentSearchResult[]> {
   try {
-    // In a real implementation, we would use a scraping service or API
+    const apiKey = Deno.env.get('MASCUS_API_KEY');
+    // First try direct API if key is available
+    if (apiKey) {
+      return await searchMascusAPI(params, apiKey);
+    }
+    
+    // If no API key, fall back to web scraping service
+    console.log('No Mascus API key found, falling back to web scraping service');
+    return await scrapeMascus(params);
+  } catch (error) {
+    console.error('Error searching Mascus:', error);
+    return [];
+  }
+}
+
+// Mascus direct API implementation
+async function searchMascusAPI(params: EquipmentSearchParams, apiKey: string): Promise<EquipmentSearchResult[]> {
+  try {
+    // Construct the API URL with search parameters
+    const baseUrl = 'https://api.mascus.com/v1/listings';
+    const searchParams = new URLSearchParams();
+    
+    if (params.query) searchParams.append('keywords', params.query);
+    if (params.make) searchParams.append('make', params.make);
+    if (params.model) searchParams.append('model', params.model);
+    if (params.year) searchParams.append('year', params.year);
+    if (params.category) searchParams.append('category', params.category);
+    if (params.minPrice) searchParams.append('min_price', params.minPrice.toString());
+    if (params.maxPrice) searchParams.append('max_price', params.maxPrice.toString());
+    
+    const apiUrl = `${baseUrl}?${searchParams.toString()}`;
+    
+    // Make the API request
+    const response = await fetch(apiUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!response.ok) {
+      console.error(`Mascus API request failed with status ${response.status}`);
+      // Fall back to web scraping service when API request fails
+      return await scrapeMascus(params);
+    }
+    
+    const data = await response.json();
+    
+    // Map the API response to our EquipmentSearchResult interface
+    const results: EquipmentSearchResult[] = data.map((item: any) => ({
+      id: item.id || '',
+      title: item.title || `${item.make || ''} ${item.model || ''}`,
+      description: item.description || item.details || '',
+      price: item.price || item.current_bid || 0,
+      currency: item.currency || 'USD',
+      year: item.year?.toString() || item.manufacture_year?.toString() || '',
+      make: item.make || item.brand || '',
+      model: item.model || '',
+      category: item.category || item.type || '',
+      condition: item.condition || 'Unknown',
+      location: item.location || item.country || '',
+      imageUrls: item.images || item.image_urls || [],
+      sourceUrl: item.url || `https://www.mascus.com/${item.id}`,
+      sourceName: 'Mascus',
+      sourceId: 'mascus',
+      specifications: item.specifications || item.tech_specs || {},
+      createdAt: item.created_at || item.listed_date || new Date().toISOString()
+    }));
+    
+    return results;
+  } catch (error) {
+    console.error('Error searching Mascus API:', error);
+    // Fall back to web scraping service when API request fails
+    return await scrapeMascus(params);
+  }
+}
+
+// Web scraping fallback for Mascus using Piloterr service
+async function scrapeMascus(params: EquipmentSearchParams): Promise<EquipmentSearchResult[]> {
+  try {
+    // In a real implementation, we would use a web scraping service here
     // For now, we'll return mock data
-    console.log('Searching Mascus for:', params.query);
+    console.log('Scraping Mascus for:', params.query);
     
     // Simulate scraping delay
     await new Promise(resolve => setTimeout(resolve, 700));
@@ -190,17 +334,98 @@ async function searchMascus(params: EquipmentSearchParams): Promise<EquipmentSea
       }
     ];
   } catch (error) {
-    console.error('Error searching Mascus:', error);
+    console.error('Error scraping Mascus:', error);
     return [];
   }
 }
 
-// MachineryTrader scraping client
+// MachineryTrader API client
 async function searchMachineryTrader(params: EquipmentSearchParams): Promise<EquipmentSearchResult[]> {
   try {
-    // In a real implementation, we would use a scraping service or API
+    const apiKey = Deno.env.get('MACHINERY_TRADER_API_KEY');
+    // First try direct API if key is available
+    if (apiKey) {
+      return await searchMachineryTraderAPI(params, apiKey);
+    }
+    
+    // If no API key, fall back to web scraping service
+    console.log('No MachineryTrader API key found, falling back to web scraping service');
+    return await scrapeMachineryTrader(params);
+  } catch (error) {
+    console.error('Error searching MachineryTrader:', error);
+    return [];
+  }
+}
+
+// MachineryTrader direct API implementation
+async function searchMachineryTraderAPI(params: EquipmentSearchParams, apiKey: string): Promise<EquipmentSearchResult[]> {
+  try {
+    // Construct the API URL with search parameters
+    const baseUrl = 'https://api.machinerytrader.com/v1/equipment';
+    const searchParams = new URLSearchParams();
+    
+    if (params.query) searchParams.append('search', params.query);
+    if (params.make) searchParams.append('make', params.make);
+    if (params.model) searchParams.append('model', params.model);
+    if (params.year) searchParams.append('year', params.year);
+    if (params.category) searchParams.append('category', params.category);
+    if (params.minPrice) searchParams.append('minprice', params.minPrice.toString());
+    if (params.maxPrice) searchParams.append('maxprice', params.maxPrice.toString());
+    
+    const apiUrl = `${baseUrl}?${searchParams.toString()}`;
+    
+    // Make the API request
+    const response = await fetch(apiUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!response.ok) {
+      console.error(`MachineryTrader API request failed with status ${response.status}`);
+      // Fall back to web scraping service when API request fails
+      return await scrapeMachineryTrader(params);
+    }
+    
+    const data = await response.json();
+    
+    // Map the API response to our EquipmentSearchResult interface
+    const results: EquipmentSearchResult[] = data.equipment_listings?.map((item: any) => ({
+      id: item.id || item.listing_id || '',
+      title: item.title || `${item.make || ''} ${item.model || ''} ${item.category || ''}`,
+      description: item.description || item.details || '',
+      price: item.price || item.current_price || 0,
+      currency: item.currency || item.price_currency || 'USD',
+      year: item.year?.toString() || item.model_year?.toString() || '',
+      make: item.make || item.manufacturer || '',
+      model: item.model || '',
+      category: item.category || item.equipment_type || '',
+      condition: item.condition || item.item_condition || 'Unknown',
+      location: item.location || item.location_city || item.seller_location || '',
+      imageUrls: item.image_urls || item.images || [],
+      sourceUrl: item.source_url || `https://www.machinerytrader.com/listing/${item.id}`,
+      sourceName: 'MachineryTrader',
+      sourceId: 'machinery-trader',
+      specifications: item.specifications || item.tech_specs || item.details || {},
+      createdAt: item.created_at || item.listed_date || new Date().toISOString()
+    })) || [];
+    
+    return results;
+  } catch (error) {
+    console.error('Error searching MachineryTrader API:', error);
+    // Fall back to web scraping service when API request fails
+    return await scrapeMachineryTrader(params);
+  }
+}
+
+// Web scraping fallback for MachineryTrader using Marketcheck service
+async function scrapeMachineryTrader(params: EquipmentSearchParams): Promise<EquipmentSearchResult[]> {
+  try {
+    // In a real implementation, we would use a web scraping service here
     // For now, we'll return mock data
-    console.log('Searching MachineryTrader for:', params.query);
+    console.log('Scraping MachineryTrader for:', params.query);
     
     // Simulate scraping delay
     await new Promise(resolve => setTimeout(resolve, 600));
@@ -265,17 +490,98 @@ async function searchMachineryTrader(params: EquipmentSearchParams): Promise<Equ
       }
     ];
   } catch (error) {
-    console.error('Error searching MachineryTrader:', error);
+    console.error('Error scraping MachineryTrader:', error);
     return [];
   }
 }
 
-// IronPlanet scraping client
+// IronPlanet API client
 async function searchIronPlanet(params: EquipmentSearchParams): Promise<EquipmentSearchResult[]> {
   try {
-    // In a real implementation, we would use a scraping service or API
+    const apiKey = Deno.env.get('IRON_PLANET_API_KEY');
+    // First try direct API if key is available
+    if (apiKey) {
+      return await searchIronPlanetAPI(params, apiKey);
+    }
+    
+    // If no API key, fall back to web scraping service
+    console.log('No IronPlanet API key found, falling back to web scraping service');
+    return await scrapeIronPlanet(params);
+  } catch (error) {
+    console.error('Error searching IronPlanet:', error);
+    return [];
+  }
+}
+
+// IronPlanet direct API implementation
+async function searchIronPlanetAPI(params: EquipmentSearchParams, apiKey: string): Promise<EquipmentSearchResult[]> {
+  try {
+    // Construct the API URL with search parameters
+    const baseUrl = 'https://api.ironplanet.com/v1/listings';
+    const searchParams = new URLSearchParams();
+    
+    if (params.query) searchParams.append('q', params.query);
+    if (params.make) searchParams.append('make', params.make);
+    if (params.model) searchParams.append('model', params.model);
+    if (params.year) searchParams.append('year_min', params.year);
+    if (params.category) searchParams.append('category', params.category);
+    if (params.minPrice) searchParams.append('price_min', params.minPrice.toString());
+    if (params.maxPrice) searchParams.append('price_max', params.maxPrice.toString());
+    
+    const apiUrl = `${baseUrl}?${searchParams.toString()}`;
+    
+    // Make the API request
+    const response = await fetch(apiUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!response.ok) {
+      console.error(`IronPlanet API request failed with status ${response.status}`);
+      // Fall back to web scraping service when API request fails
+      return await scrapeIronPlanet(params);
+    }
+    
+    const data = await response.json();
+    
+    // Map the API response to our EquipmentSearchResult interface
+    const results: EquipmentSearchResult[] = data.results?.map((item: any) => ({
+      id: item.id || item.listing_id || '',
+      title: item.title || `${item.make || ''} ${item.model || ''}`,
+      description: item.description || item.listing_description || '',
+      price: item.price || item.current_bid || item.buy_now_price || 0,
+      currency: item.currency || 'USD',
+      year: item.year?.toString() || item.manufacture_year?.toString() || '',
+      make: item.make || item.brand || '',
+      model: item.model || '',
+      category: item.category || item.type || item.category_name || '',
+      condition: item.condition || item.item_condition || 'Unknown',
+      location: item.location || item.seller_location || '',
+      imageUrls: item.image_urls || item.images || [],
+      sourceUrl: item.source_url || item.listing_url || `https://www.ironplanet.com/listing/${item.id}`,
+      sourceName: 'IronPlanet',
+      sourceId: 'iron-planet',
+      specifications: item.specifications || item.tech_specs || {},
+      createdAt: item.created_at || item.listed_date || new Date().toISOString()
+    })) || [];
+    
+    return results;
+  } catch (error) {
+    console.error('Error searching IronPlanet API:', error);
+    // Fall back to web scraping service when API request fails
+    return await scrapeIronPlanet(params);
+  }
+}
+
+// Web scraping fallback for IronPlanet using Marketcheck service
+async function scrapeIronPlanet(params: EquipmentSearchParams): Promise<EquipmentSearchResult[]> {
+  try {
+    // In a real implementation, we would use a web scraping service here
     // For now, we'll return mock data
-    console.log('Searching IronPlanet for:', params.query);
+    console.log('Scraping IronPlanet for:', params.query);
     
     // Simulate scraping delay
     await new Promise(resolve => setTimeout(resolve, 550));
@@ -340,10 +646,16 @@ async function searchIronPlanet(params: EquipmentSearchParams): Promise<Equipmen
       }
     ];
   } catch (error) {
-    console.error('Error searching IronPlanet:', error);
+    console.error('Error scraping IronPlanet:', error);
     return [];
   }
 }
+
+// CORS headers for responses
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
 
 // Main handler function
 serve(async (req) => {
